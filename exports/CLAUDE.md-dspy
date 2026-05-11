@@ -1,0 +1,38 @@
+# DSPy Framework Context
+
+## About
+DSPy is a framework for programming—not prompting—language models. This project uses DSPy 3.x.
+
+## Key Principles
+1. Signatures define contracts (input/output types), not prompt strings
+2. Modules compose logic (Predict, ChainOfThought, ReAct)
+3. Optimizers improve prompts automatically
+4. Evaluators measure systematic progress
+
+## When Writing DSPy Code
+- Use type annotations on ALL Signature fields
+- Remove any `prefix=` from InputField/OutputField (deprecated 3.2+)
+- Call `super().__init__()` in every custom Module
+- Wrap JSON parsing in try/except for graceful fallback
+- Configure LM once: `dspy.configure(lm=dspy.LM("openai/gpt-4o-mini"))`
+
+## Common Patterns
+- **RAG:** Retrieve passages → ChainOfThought → Answer
+- **ReAct:** Reason + Act with tools, set max_iters
+- **Multi-hop:** Iterative retrieval with sub-questions
+- **Structured Extraction:** Signatures with JSON output fields
+
+## Testing
+- Use `dspy.evaluate.Evaluate` for systematic evaluation
+- Define metrics as: `def metric(example, pred) -> float:`
+- Run `dspy.inspect_history(n=3)` to debug predictions
+
+## Optimization
+- Start with `BootstrapFewShot` for few-shot examples
+- Use `MIPROv2` for advanced prompt optimization
+- Always compare optimized vs baseline scores
+
+## Files
+- Core docs: `~/Wiki/pages/dspy-framework/`
+- Source index: `~/Wiki/pages/dspy-framework/source-index/`
+- Query CLI: `dspy-query <keyword>`

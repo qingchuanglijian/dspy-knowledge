@@ -1,0 +1,50 @@
+# DSPy Framework Rules for Cursor
+
+## General
+- Prefer DSPy 3.x patterns over 2.x
+- Always use type annotations in Signatures
+- Never use `prefix=` in InputField/OutputField (deprecated in 3.2+)
+- Always call `super().__init__()` in custom Modules
+
+## Signature Pattern
+```python
+class TaskName(dspy.Signature):
+    """Clear task description."""
+    input: str = dspy.InputField(desc="...")
+    output: str = dspy.OutputField(desc="...")
+```
+
+## Module Pattern
+```python
+class MyModule(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.predict = dspy.ChainOfThought(TaskName)
+    
+    def forward(self, **kwargs):
+        return self.predict(**kwargs)
+```
+
+## LM Configuration
+```python
+lm = dspy.LM("openai/gpt-4o-mini")
+dspy.configure(lm=lm)
+```
+
+## Error Handling
+- Wrap JSON parsing in try/except
+- Handle empty retriever results
+- Validate category code matches in config-driven pipelines
+
+## Imports
+```python
+import dspy
+from dspy.evaluate import Evaluate
+from dspy.teleprompt import BootstrapFewShot, MIPROv2
+```
+
+## Anti-patterns
+- ❌ `dspy.OpenAI()` → ✅ `dspy.LM()`
+- ❌ `InputField(prefix="...")` → ✅ `InputField(desc="...")`
+- ❌ `dspy.settings.configure()` → ✅ `dspy.configure()`
+- ❌ No type annotations → ✅ Always annotate

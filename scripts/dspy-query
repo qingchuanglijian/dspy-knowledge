@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""
+DSPy Source Query CLI
+Query the DSPy source code index for classes, functions, or patterns.
+
+Usage:
+  dspy-query <keyword>              # Search everything
+  dspy-query --class <name>         # Search classes
+  dspy-query --function <name>      # Search functions  
+  dspy-query --module <name>        # Search modules
+  dspy-query --list-modules         # List all modules
+  dspy-query --list-classes         # List all classes
+"""
+
+import json
+import sys
+import argparse
+from pathlib import Path
+
+INDEX_PATH = Path(__file__).parent.parent / "source-index" / "index.json"
+
+def load_index():
+    with open(INDEX_PATH, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+def search_all(index, keyword):
+    results = []
+    keyword_lower = keyword.lower()
+    
+    for module in index["modules"]:
+        # Search module names
+        if keyword_lower in module["module"].lower():
+            results.append(("module", module["module"], module["filepath"], ""))
+        
+        # Search classes
+        for cls in module["classes"]:
+            if keyword_lower in cls["name"].lower() or keyword_lower in cls["docstring"].lower():
+                results.append(("class", f"{module['module']}.{cls['name']}", module["filepath"], cls["docstring"][:150]))
+        
+        # Search functions
+        for func in module["functions"]:
+            if keyword_lower in func["name"].lower() or keyword_lower in func["docstring"].lower():
+                results.append(("function", f"{module['module']}.{func['name']}", module["filepath"], func["docstring"][:150]))
+    
+    return results
+
+def main():
+    parser = argparse.ArgumentParser(description="Query DSPy source code index")
+    parser.add_argument("keyword", nargs="?", help="Search keyword")
+    parser.add_argument("--class", dest="search_class", help="Search for a class")
+    parser.add_argument("--function", help="Search for a function")
+    parser.add_argument("--module", help="Search for a module")
+    parser.add_argument("--list-modules", action="store_true", help="List all modules")
+    parser.add_argument("--list-classes", action="store_true", help="List all classes")
+    parser.add_argument("--json", action="store_true", help="Output as JSON")
+    
+    args = parser.parse_args()
+    index = load_index()
+    
+    if args.list_modules:
+        for m in index["modules"]:
+            print(m["module"])
+        return
+    
+    if args.list_classes:
+        for module in index["modules"]:
+            for cls in module["classes"]:
+                print(f"{module['module']}.{cls['name']}")
+        return
+    
+    keyword = args.keyword or args.search_class or args.function or args.module
+    if not keyword:
+        parser.print_help()
+        sys.exit(1)
+    
+    results = search_all(index, keyword)
+    
+    if args.json:
+        print(json.dumps([{"type": r[0], "name": r[1], "file": r[2], "doc": r[3]} for r in results], indent=2))
+        return
+    
+    if not results:
+        print(f"No results found for '{keyword}'")
+        sys.exit(1)
+    
+    print(f"Found {len(results)} results for '{keyword}':\n")
+    for rtype, name, filepath, doc in results[:20]:
+        print(f"[{rtype.upper()}] {name}")
+        print(f"  File: {filepath}")
+        if doc:
+            print(f"  Doc: {doc[:100]}...")
+        print()
+
+if __name__ == "__main__":
+    main()
