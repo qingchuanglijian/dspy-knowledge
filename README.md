@@ -66,11 +66,31 @@ Then configure in your MCP client:
 
 ### Design Patterns
 
-| Pattern | File | Complexity |
-|---------|------|------------|
-| RAG (Retrieval-Augmented Generation) | [`patterns/rag.md`](patterns/rag.md) | Beginner |
-| ReAct Agent (Reason + Act) | [`patterns/react-agent.md`](patterns/react-agent.md) | Intermediate |
-| Multi-hop Reasoning | [`patterns/multi-hop.md`](patterns/multi-hop.md) | Advanced |
+| Pattern | File | Complexity | Status |
+|---------|------|------------|--------|
+| Predict (P01) | [`patterns/predict.md`](patterns/predict.md) | Foundation | ✅ Batch 1 |
+| ChainOfThought (P02) | [`patterns/chain-of-thought.md`](patterns/chain-of-thought.md) | Foundation | ✅ Batch 1 |
+| ReAct Agent (P03) | [`patterns/react-agent.md`](patterns/react-agent.md) | Intermediate | ✅ Batch 1 |
+| RAG (P04) | [`patterns/rag.md`](patterns/rag.md) | Beginner | ✅ Batch 1 |
+| Multi-hop Reasoning (P05) | [`patterns/multi-hop.md`](patterns/multi-hop.md) | Advanced | ✅ Batch 1 |
+| ProgramOfThought (P06) | [`patterns/program-of-thought.md`](patterns/program-of-thought.md) | Intermediate | ✅ Batch 1 |
+| Custom Module (P07) | [`patterns/custom-module.md`](patterns/custom-module.md) | Foundation—Intermediate | ✅ Batch 1 |
+| **BestOfN (P08)** | [`patterns/best-of-n.md`](patterns/best-of-n.md) | Intermediate | ✅ **Batch 2** |
+| **Refine (P09)** | [`patterns/refine.md`](patterns/refine.md) | Intermediate | ✅ **Batch 2** |
+| **Parallel (P10)** | [`patterns/parallel.md`](patterns/parallel.md) | Intermediate | ✅ **Batch 2** |
+| **MultiChainComparison (P11)** | [`patterns/multi-chain-comparison.md`](patterns/multi-chain-comparison.md) | Advanced | ✅ **Batch 2** |
+| **Router (P12)** | [`patterns/router.md`](patterns/router.md) | Intermediate | ✅ **Batch 2** |
+| **Conversation History (P13)** | [`patterns/conversation-history.md`](patterns/conversation-history.md) | Intermediate | ✅ **Batch 2** |
+| **BootstrapFewShot (P14)** | [`patterns/bootstrap-few-shot.md`](patterns/bootstrap-few-shot.md) | Intermediate | ✅ **Batch 3** |
+| **MIPROv2 (P15)** | [`patterns/mipro-v2.md`](patterns/mipro-v2.md) | Advanced | ✅ **Batch 3** |
+| **GEPA (P16)** | [`patterns/gepa.md`](patterns/gepa.md) | Advanced | ✅ **Batch 3** |
+| **RL Optimization (P17)** | [`patterns/rl-optimization.md`](patterns/rl-optimization.md) | Expert | ✅ **Batch 3** |
+| **Ensemble (P18)** | [`patterns/ensemble.md`](patterns/ensemble.md) | Intermediate | ✅ **Batch 3** |
+| **MCP Integration (P19)** | [`patterns/mcp-integration.md`](patterns/mcp-integration.md) | Intermediate | ✅ **Batch 4** |
+| **Streaming (P20)** | [`patterns/streaming.md`](patterns/streaming.md) | Intermediate | ✅ **Batch 4** |
+| **Async (P21)** | [`patterns/async.md`](patterns/async.md) | Intermediate | ✅ **Batch 4** |
+| **Saving & Loading (P22)** | [`patterns/saving-loading.md`](patterns/saving-loading.md) | Beginner | ✅ **Batch 4** |
+| Pattern Catalog | [`patterns/pattern-catalog.md`](patterns/pattern-catalog.md) | All levels | ✅ Master index |
 
 ### Tools
 
