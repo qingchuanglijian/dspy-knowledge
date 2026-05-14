@@ -1,253 +1,100 @@
 ---
 pattern_id: P05-MultiHopRAG
 difficulty: advanced
-source_tutorial: Multi-Hop RAG, RL for Multi-Hop Research
-api_modules: [MultiChainComparison, ChainOfThought, Predict]
+source_tutorial: Multi-Hop Retrieval from dspy.ai
+api_modules: [MultiHop, ChainOfThought]
 ---
 
-# DSPy Pattern: Multi-hop Reasoning
+## 1. 核心思想 (Core Concept)
 
-**Purpose:** Answer complex questions requiring multiple reasoning steps or information sources.  
-**Complexity:** Advanced  
-**Dependencies:** Retriever or knowledge base
+Complex questions often require connecting information from multiple sources. Multi-hop iteratively retrieves documents, uses intermediate findings to reformulate queries, and retrieves again until the answer can be synthesized.
 
----
-
-## Architecture
+## 2. 类图与数据流 (Architecture)
 
 ```
-Question → [Hop 1: Retrieve + Reason] → Sub-question → [Hop 2: Retrieve + Reason] → ... → Final Answer
+Query → Retrieve → Reason → Generate sub-query → Retrieve → ... → Synthesize final answer
 ```
 
-## Implementation
+## 3. 最小可运行代码 (MVP Code)
 
 ```python
 import dspy
 
-# 1. Signatures
-class GenerateSubQuestion(dspy.Signature):
-    """Break down the question into a sub-question for this hop."""
+
+class GenerateFollowUp(dspy.Signature):
+    """Generate a follow-up query based on intermediate findings."""
     question: str = dspy.InputField()
-    previous_context: str = dspy.InputField(desc="Information gathered so far")
-    sub_question: str = dspy.OutputField(desc="Specific question for this hop")
+    context: str = dspy.InputField(desc="Retrieved passages so far")
+    follow_up: str = dspy.OutputField(desc="Next query or 'DONE' if sufficient")
+    reasoning: str = dspy.OutputField(desc="Step-by-step reasoning")
+
 
 class SynthesizeAnswer(dspy.Signature):
-    """Synthesize final answer from all gathered information."""
+    """Synthesize the final answer from all gathered context."""
     question: str = dspy.InputField()
-    all_context: str = dspy.InputField(desc="All retrieved passages")
+    context: str = dspy.InputField(desc="All retrieved passages")
     answer: str = dspy.OutputField()
 
-# 2. Module
-class MultiHopReasoner(dspy.Module):
+
+class MultiHopRAG(dspy.Module):
     def __init__(self, retriever, max_hops: int = 3):
         super().__init__()
         self.retriever = retriever
         self.max_hops = max_hops
-        self.gen_sub_q = dspy.ChainOfThought(GenerateSubQuestion)
+        self.follow_up = dspy.ChainOfThought(GenerateFollowUp)
         self.synthesize = dspy.ChainOfThought(SynthesizeAnswer)
-    
-    def forward(self, question: str):
-        context = []
-        
-        for hop in range(self.max_hops):
-            # Generate sub-question
-            if hop == 0:
-                sub_q = question
-            else:
-                sub_q_result = self.gen_sub_q(
-                    question=question,
-                    previous_context="\n".join(context)
-                )
-                sub_q = sub_q_result.sub_question
-            
-            # Retrieve
-            passages = self.retriever(sub_q)
-            context.extend([f"[Hop {hop+1}] {p}" for p in passages])
-        
-        # Synthesize
-        return self.synthesize(
-            question=question,
-            all_context="\n".join(context)
-        )
 
-# 3. Usage
-retriever = lambda q: ["Passage about X...", "Passage about Y..."]
-reasoner = MultiHopReasoner(retriever, max_hops=3)
+    def forward(self, question: str) -> dspy.Prediction:
+        context: list[str] = []
+        current_query = question
 
-lm = dspy.LM("openai/gpt-4o")
+        for _ in range(self.max_hops):
+            passages = self.retriever(current_query)
+            if not passages:
+                break
+            context.extend(passages)
+
+            follow = self.follow_up(question=question, context="\n\n".join(context))
+            if follow.follow_up.strip().upper() == "DONE":
+                break
+            current_query = follow.follow_up
+
+        return self.synthesize(question=question, context="\n\n".join(context))
+
+
+# Usage
+
+def dummy_retriever(query: str) -> list[str]:
+    return [f"Passage about: {query}"]
+
+
+lm = dspy.LM("openai/gpt-4o-mini")
 dspy.configure(lm=lm)
 
-result = reasoner(question="What is the relationship between A and B?")
+rag = MultiHopRAG(retriever=dummy_retriever, max_hops=3)
+result = rag(question="What is the relationship between A and B?")
 print(result.answer)
 ```
 
-## Self-Ask Variant
+## 4. 常见反模式与诊断 (Anti-patterns)
 
-The model asks itself questions iteratively:
+| # | Anti-pattern | Symptom | Fix |
+|---|---|---|---|
+| 1 | **Too many hops without a stopping condition** | Infinite retrieval loops, spiraling token usage | Add a `max_hops` ceiling and a per-hop `is_sufficient` / `DONE` gate |
+| 2 | **Not using intermediate reasoning to guide next hop** | Random follow-up queries that ignore prior context | Pass accumulated context into every `GenerateFollowUp` call and require explicit `reasoning` |
+| 3 | **Ignoring retrieval failures** | Empty results crash the pipeline or produce hallucinated answers | Check `if not passages: break` after each retrieval step |
 
-```python
-class SelfAsk(dspy.Module):
-    def __init__(self, retriever, max_followups: int = 3):
-        super().__init__()
-        self.retriever = retriever
-        self.max_followups = max_followups
-        self.ask = dspy.ChainOfThought(SelfAskSignature)
-        self.answer = dspy.ChainOfThought(FinalAnswerSignature)
-    
-    def forward(self, question: str):
-        context = []
-        current_q = question
-        
-        for _ in range(self.max_followups):
-            result = self.ask(question=current_q, context="\n".join(context))
-            
-            if result.followup_question:
-                passages = self.retriever(result.followup_question)
-                context.extend(passages)
-                current_q = result.followup_question
-            else:
-                break
-        
-        return self.answer(question=question, context="\n".join(context))
-```
+## 5. 组合指南 (Composition)
 
-## Evaluation
+| Combination | Role of Multi-hop | Role of Partner | When to Use |
+|---|---|---|---|
+| **MultiHop + RAG** | Orchestrates the overall hop loop | Each hop is a self-contained RAG step (retrieve then generate) | Linear multi-document questions where each hop can be answered independently |
+| **MultiHop + ChainOfThought** | Structures the iterative retrieval | Provides explicit reasoning traces inside every hop | Debugging complex reasoning paths; improves sub-query quality |
+| **MultiHop + Custom Module** | Acts as the retriever interface | Maintains shared state (e.g., visited docs, running summary) across hops | Long-running research tasks that need persistent memory |
 
-```python
-def multi_hop_correctness(example, pred) -> float:
-    """Evaluate multi-hop answers."""
-    # Often requires LLM-as-judge due to complexity
-    judge = dspy.Predict(JudgeSignature)
-    result = judge(
-        question=example.question,
-        gold=example.answer,
-        predicted=pred.answer
-    )
-    return float(result.score)
-```
+## 6. 进阶变体 (Advanced Variants)
 
-## Pitfalls
-
-1. **Looping** — Without exit condition, agent keeps asking questions. Always include "is_answerable" check.
-2. **Context explosion** — Each hop adds more text. Summarize or compress periodically.
-3. **Wrong sub-questions** — Poorly formed sub-questions derail retrieval. Use ChainOfThought to improve quality.
-
-## 4. Common Anti-patterns and Diagnosis
-
-Multi-hop reasoning is fragile because errors in early hops propagate. The four anti-patterns below are the most common sources of failure.
-
-### 4.1 Each Hop is Independent
-If a hop does not receive the accumulated context from prior hops, it retrieves the same information repeatedly and makes no progress.
-
-**Wrong**
-```python
-for hop in range(self.max_hops):
-    sub_q = self.gen_sub_q(question=question)  # ❌ No previous_context passed
-    passages = self.retriever(sub_q)
-```
-
-**Correct**
-```python
-for hop in range(self.max_hops):
-    sub_q = self.gen_sub_q(question=question, previous_context="\n".join(context))
-    passages = self.retriever(sub_q)
-    context.extend(passages)
-```
-
-**Debug tip:** Log each sub-question; if they are semantically identical across hops, state is not being passed.
-
-### 4.2 Not Setting a `max_hops` Limit
-Without an upper bound, ambiguous queries trigger infinite retrieval loops.
-
-**Wrong**
-```python
-while not done:  # ❌ No guard; 'done' may never fire
-    ...
-```
-
-**Correct**
-```python
-for hop in range(self.max_hops):  # ✅ Hard ceiling
-    ...
-```
-
-**Debug tip:** Monitor token usage per query; a sudden spike often indicates unbounded looping.
-
-### 4.3 Not Using a Stop Condition
-Running all `max_hops` even when the answer is already found wastes tokens and can overwrite a correct answer.
-
-**Wrong**
-```python
-for hop in range(self.max_hops):
-    ...  # ❌ Always runs to max_hops
-return self.synthesize(...)
-```
-
-**Correct**
-```python
-for hop in range(self.max_hops):
-    ...
-    if self.should_stop(question=question, context=context):  # ✅ Early exit
-        break
-return self.synthesize(...)
-```
-
-**Debug tip:** Compare answers synthesized after 1 hop vs `max_hops`; if quality degrades after an early correct retrieval, you need a stop gate.
-
-### 4.4 Retrieving but Not Aggregating Context
-Using only the last hop's passages discards evidence gathered earlier.
-
-**Wrong**
-```python
-for hop in range(self.max_hops):
-    passages = self.retriever(sub_q)
-    context = passages  # ❌ Overwrites instead of accumulates
-return self.synthesize(question=question, all_context="\n".join(context))
-```
-
-**Correct**
-```python
-for hop in range(self.max_hops):
-    passages = self.retriever(sub_q)
-    context.extend(passages)  # ✅ Accumulates across hops
-return self.synthesize(question=question, all_context="\n".join(context))
-```
-
-**Debug tip:** If the final answer ignores facts clearly present in early hops, check whether `context` is being overwritten.
-
-## 5. Composition Guide
-
-Multi-hop systems benefit enormously from tool use, verification, and ensemble strategies.
-
-| Pattern | When to Compose | Mini Example |
-|---|---|---|
-| **Multi-Hop + ReAct** | Each hop needs tool use (calculator, APIs) | The retrieval step inside a hop delegates to a `ReAct` agent that can call tools. |
-| **Multi-Hop + Judge** | Verify after each hop before continuing | A `Judge` module scores retrieved context; if irrelevant, trigger query rewriting. |
-| **Multi-Hop + BestOfN** | Try multiple hop strategies in parallel | Run *N* independent multi-hop chains and return the answer with the highest judge score. |
-
-```python
-# Multi-Hop + Judge sketch
-class CheckedMultiHop(dspy.Module):
-    def __init__(self, retriever):
-        self.reasoner = MultiHopReasoner(retriever)
-        self.judge = dspy.Predict(JudgeSignature)
-
-    def forward(self, question: str):
-        pred = self.reasoner(question=question)
-        verdict = self.judge(question=question, answer=pred.answer, context=pred.all_context)
-        if verdict.is_correct:
-            return pred
-        return self.reasoner(question=question + " (be more specific)")
-```
-
-Use multi-hop alone when the retrieval path is linear and deterministic. Compose when individual hops need external tools, when answers must be verified, or when you want to explore multiple reasoning paths.
-
-## 6. Advanced Variants
-
-- **Learned hop termination:** Train a small DSPy classifier (`dspy.Predict`) that takes the current context and sub-question as input and outputs a `should_stop` boolean. Compile it with labeled examples to replace heuristic stop rules.
-- **Adaptive `k` per hop:** Use an early hop with a large `k` to explore broadly, then reduce `k` in later hops once the topic is narrowed. Expose `k` as a per-hop parameter.
-- **Context compression:** Periodically summarize the accumulated context with a `Summarize` module so that later hops receive a fixed-size input regardless of hop count.
-
----
-
-**Next:** Review [`../core-concepts.md`](../core-concepts.md) for optimizer integration with multi-hop.
+- **Learned stopping classifier** — Replace the hard-coded `DONE` heuristic with a small `dspy.Predict` classifier trained on labeled examples to decide when context is sufficient.
+- **Adaptive hop count** — Start with a large retrieval `k` for broad exploration, then shrink `k` in later hops once the topic is narrowed.
+- **Parallel hops (branching)** — Spawn multiple independent follow-up queries at each hop, explore branches in parallel, and select the best-supported answer.
+- **Confidence-based early stopping** — After each hop, score answer confidence; exit immediately if confidence exceeds a calibrated threshold.

@@ -1,229 +1,109 @@
 ---
 pattern_id: P04-RAG
 difficulty: beginner
-source_tutorial: Retrieval-Augmented Generation
-api_modules: [Predict, ChainOfThought]
+source_tutorial: Retrieval-Augmented Generation from dspy.ai
+api_modules: [Retrieve, ChainOfThought]
 ---
 
-# DSPy Pattern: RAG (Retrieval-Augmented Generation)
+## 1. 核心思想 (Core Concept)
 
-**Purpose:** Build a RAG pipeline with DSPy — retrieve relevant passages, then generate answers.  
-**Complexity:** Beginner — Intermediate  
-**Dependencies:** Any retriever (vector DB, BM25, hybrid)
+Retrieve relevant passages from a knowledge base, then generate an answer conditioned on them. RAG grounds generation in external knowledge, reducing hallucination by ensuring the model has access to up-to-date or domain-specific facts at inference time.
 
----
-
-## Architecture
+## 2. 类图与数据流 (Architecture)
 
 ```
-Question → [Retriever] → Passages → [DSPy Module] → Answer
-                    ↓
-            (Can be any: vector search, BM25, hybrid)
+Query → Retrieve(k passages) → Concatenate(query + passages) → Generate(answer)
 ```
 
-## Basic Implementation
+- **Retrieve:** Takes a query and returns the top-k relevant passages from an external index (vector DB, BM25, or hybrid).
+- **Concatenate:** Joins the query and retrieved passages into a single context string.
+- **Generate:** A DSPy module (typically `ChainOfThought`) produces the final answer grounded in the provided context.
+
+## 3. 最小可运行代码 (MVP Code)
 
 ```python
 import dspy
-from typing import List
+from typing import List, Protocol
 
-# 1. Signature
+
+class Retriever(Protocol):
+    def __call__(self, query: str, k: int) -> List[str]: ...
+
+
 class GenerateAnswer(dspy.Signature):
     """Answer the question based on the provided context passages."""
+
     context: str = dspy.InputField(desc="Relevant passages concatenated with newlines")
     question: str = dspy.InputField()
     answer: str = dspy.OutputField(desc="Concise answer based on context")
 
-# 2. Module
+
 class RAG(dspy.Module):
-    def __init__(self, retriever, k_passages: int = 3):
+    def __init__(self, retriever: Retriever, k_passages: int = 3) -> None:
         super().__init__()
         self.retriever = retriever
         self.k = k_passages
         self.generate = dspy.ChainOfThought(GenerateAnswer)
-    
+
     def forward(self, question: str) -> dspy.Prediction:
-        passages = self.retriever(question, k=self.k)
+        passages: List[str] = self.retriever(question, k=self.k)
         context = "\n".join(passages)
         return self.generate(context=context, question=question)
 
-# 3. Usage
-retriever = lambda q, k: ["Passage 1...", "Passage 2..."]  # Your retriever
-rag = RAG(retriever, k_passages=3)
 
-lm = dspy.LM("openai/gpt-4o-mini")
-dspy.configure(lm=lm)
+# Mock retriever for standalone testing
+def mock_retriever(query: str, k: int) -> List[str]:
+    return [
+        "DSPy is a framework for programming language models.",
+        "It emphasizes modular, composable signatures and modules.",
+    ][:k]
 
-result = rag(question="What is DSPy?")
-print(result.answer)
+
+if __name__ == "__main__":
+    lm = dspy.LM("openai/gpt-4o-mini")
+    dspy.configure(lm=lm)
+
+    rag = RAG(retriever=mock_retriever, k_passages=2)
+    result = rag(question="What is DSPy?")
+    print(result.answer)
 ```
 
-## Advanced: Multi-hop RAG
+## 4. 常见反模式与诊断 (Anti-patterns)
 
-For questions requiring multiple retrieval steps:
+### 4.1 Retrieve then ignore context
+Generating an answer without actually using the retrieved passages. The model hallucinates or relies on parametric knowledge instead of the provided context.
 
-```python
-class GenerateSearchQuery(dspy.Signature):
-    """Generate a search query to find missing information."""
-    question: str = dspy.InputField()
-    existing_context: str = dspy.InputField()
-    search_query: str = dspy.OutputField(desc="Query to retrieve missing info")
+**Symptom:** Answer contradicts retrieved passages or mentions facts not present in context.  
+**Fix:** Use `ChainOfThought` and prompt for explicit grounding; add a post-hoc attribution check.
 
-class MultiHopRAG(dspy.Module):
-    def __init__(self, retriever, max_hops: int = 3):
-        super().__init__()
-        self.retriever = retriever
-        self.max_hops = max_hops
-        self.generate_query = dspy.ChainOfThought(GenerateSearchQuery)
-        self.generate_answer = dspy.ChainOfThought(GenerateAnswer)
-    
-    def forward(self, question: str):
-        context = []
-        for hop in range(self.max_hops):
-            if hop == 0:
-                query = question
-            else:
-                query_result = self.generate_query(
-                    question=question,
-                    existing_context="\n".join(context)
-                )
-                query = query_result.search_query
-            
-            passages = self.retriever(query)
-            context.extend(passages)
-        
-        return self.generate_answer(
-            context="\n".join(context),
-            question=question
-        )
-```
+### 4.2 Flatten all retrieved passages into one blob
+Concatenating every passage into an unstructured wall of text removes boundaries, making attribution hard and increasing noise.
 
-## Evaluation
+**Symptom:** Answers blend information across passages incorrectly; citations are impossible.  
+**Fix:** Number passages, insert separators, or pass a `List[str]` and let the module reference passage indices.
 
-```python
-def answer_exact_match(example, pred) -> float:
-    return 1.0 if example.answer.lower() == pred.answer.lower() else 0.0
+### 4.3 Hard-code retriever inside the module
+Baking retriever logic (e.g., `some_vector_db.query(...)`) directly into `forward()` prevents swapping retrievers for testing or different environments.
 
-def answer_contains(example, pred) -> float:
-    return 1.0 if example.answer.lower() in pred.answer.lower() else 0.0
+**Symptom:** Unit tests require a live vector DB; cannot evaluate with a mock retriever.  
+**Fix:** Inject the retriever via `__init__` (as shown in the MVP) so any callable `Retriever` can be substituted.
 
-# Run evaluation
-evaluator = Evaluate(devset=devset, metric=answer_exact_match, num_threads=4)
-score = evaluator(rag)
-```
+## 5. 组合指南 (Composition)
 
-## Optimization
-
-```python
-# Compile with few-shot examples
-optimizer = BootstrapFewShot(metric=answer_exact_match)
-optimized_rag = optimizer.compile(rag, trainset=trainset)
-
-# Evaluate optimized
-score = evaluator(optimized_rag)
-```
-
-## Pitfalls
-
-1. **Empty retrieval** — Always handle `passages=[]` → return "No relevant information found"
-2. **Context too long** — Truncate or rank passages by relevance
-3. **Retriever not returning strings** — Ensure retriever returns `List[str]`
-4. **No attribution** — Consider adding `citations` output field
-
-## 4. Common Anti-patterns and Diagnosis
-
-RAG is conceptually simple, but subtle implementation errors destroy optimizability and accuracy. Here are the four mistakes agents make most often.
-
-### 4.1 Coupling Retriever and Generator in One Module
-Tightly binding retrieval and generation prevents independent optimization of each stage.
-
-**Wrong**
-```python
-class RAG(dspy.Module):
-    def __init__(self):
-        self.generate = dspy.Predict(GenerateAnswer)  # ❌ Retriever logic buried inside forward
-
-    def forward(self, question: str):
-        passages = some_vector_db.query(question)  # ❌ Hard-wired, non-configurable
-        return self.generate(context="\n".join(passages), question=question)
-```
-
-**Correct**
-```python
-class RAG(dspy.Module):
-    def __init__(self, retriever, k_passages: int = 3):
-        self.retriever = retriever
-        self.k = k_passages
-        self.generate = dspy.ChainOfThought(GenerateAnswer)
-```
-
-**Debug tip:** If you cannot swap retrievers or tune `k` without rewriting the module, the coupling is too tight.
-
-### 4.2 Not Using ChainOfThought for the Generator
-A direct `Predict` lacks explicit reasoning and often skips steps or hallucinates.
-
-**Wrong**
-```python
-self.generate = dspy.Predict(GenerateAnswer)  # ❌ No reasoning trace
-```
-
-**Correct**
-```python
-self.generate = dspy.ChainOfThought(GenerateAnswer)  # ✅ Forces step-by-step reasoning
-```
-
-**Debug tip:** Check the `rationale` field in the prediction; if it is empty or missing, you are using `Predict` instead of `ChainOfThought`.
-
-### 4.3 Hard-coding Retriever `k`
-Baking the number of passages into the module body makes it impossible to adapt to different question complexities.
-
-**Wrong**
-```python
-passages = self.retriever(question, k=3)  # ❌ Magic number
-```
-
-**Correct**
-```python
-passages = self.retriever(question, k=self.k)  # ✅ Configurable at init/compile time
-```
-
-**Debug tip:** Evaluate with varying `k` values; if performance plateaus early, your hard-coded value may be suboptimal.
-
-### 4.4 Passing Raw Passage Objects
-Feeding list-of-dicts or database records into the signature instead of a formatted context string confuses the LM.
-
-**Wrong**
-```python
-context = self.retriever(question)  # ❌ Returns [{"text": "..."}, ...]
-return self.generate(context=context, question=question)
-```
-
-**Correct**
-```python
-context = "\n\n".join(p["text"] for p in self.retriever(question))
-return self.generate(context=context, question=question)
-```
-
-**Debug tip:** If the model produces JSON-ish output or complains about "object" references, you likely passed raw structures instead of a string.
-
-## 5. Composition Guide
-
-RAG becomes significantly more powerful when combined with iterative retrieval, verification, or refinement patterns.
-
-| Pattern | When to Compose | Mini Example |
+| Composition | Purpose | Sketch |
 |---|---|---|
-| **RAG + Multi-Hop** | Iterative retrieval for complex questions | Use the answer from hop *n* to generate a follow-up query for hop *n+1*. |
-| **RAG + Judge** | Verify the generated answer against retrieved context | A separate `Judge` module scores `answer` vs `context`; retry if inconsistent. |
-| **RAG + Refine** | Iterative answer improvement | Generate an initial answer, then feed it back with the context to polish or expand. |
+| **RAG + ChainOfThought** | Reasoning-aware retrieval | Use `ChainOfThought` not just for the final answer, but also to reformulate the query before retrieval based on reasoning steps. |
+| **RAG + MultiHop** | Iterative retrieval | After an initial retrieval and partial answer, generate a follow-up query, retrieve again, and accumulate context across hops. |
+| **RAG + Custom Module** | Multi-stage pipeline | Insert a `Judge` or `Refine` module between retrieval and generation (or after generation) to verify support or polish the answer. |
 
 ```python
-# RAG + Judge sketch
 class VerifiableRAG(dspy.Module):
-    def __init__(self, retriever):
+    def __init__(self, retriever: Retriever) -> None:
+        super().__init__()
         self.rag = RAG(retriever)
-        self.judge = dspy.Predict(JudgeSignature)
+        self.judge = dspy.ChainOfThought("context, answer -> is_supported: bool")
 
-    def forward(self, question: str):
+    def forward(self, question: str) -> dspy.Prediction:
         pred = self.rag(question=question)
         verdict = self.judge(context=pred.context, answer=pred.answer)
         if verdict.is_supported:
@@ -231,14 +111,9 @@ class VerifiableRAG(dspy.Module):
         return self.rag(question=question + " (provide more detail)")
 ```
 
-Use standalone RAG for straightforward single-hop questions. Compose when the query requires disambiguation, verification, or progressive narrowing.
+## 6. 进阶变体 (Advanced Variants)
 
-## 6. Advanced Variants
-
-- **Hybrid retrieval:** Combine BM25 sparse retrieval with dense vector search, then merge and de-duplicate results before passing to the generator.
-- **Reranking:** Add a lightweight cross-encoder or DSPy `Predict` reranker that scores the top-*k* retrieved passages and keeps only the most relevant subset.
-- **Query rewriting:** Insert a `RewriteQuery` module before retrieval to expand acronyms, add synonyms, or convert conversational history into a standalone search query.
-
----
-
-**Next:** [`react-agent.md`](./react-agent.md) for agentic reasoning with tools.
+- **Hybrid retrieval:** Combine dense vector search with sparse BM25 retrieval, merge and de-duplicate results before passing to the generator. Often improves recall over either method alone.
+- **Reranking:** Add a lightweight cross-encoder (or a DSPy `Predict` reranker) that scores the top-k retrieved passages and keeps only the most relevant subset, reducing context noise.
+- **Query expansion:** Insert a `RewriteQuery` module before retrieval to expand acronyms, add synonyms, or convert conversational history into a standalone search query.
+- **Source attribution:** Extend the signature with a `citations` output field that references the indices of passages used to derive the answer, enabling traceability and verification.
